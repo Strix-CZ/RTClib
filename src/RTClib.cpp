@@ -1415,8 +1415,7 @@ boolean RTC_PCF8563::begin(TwoWire *wireInstance) {
 /**************************************************************************/
 
 boolean RTC_PCF8563::lostPower(void) {
-  return (read_i2c_register(PCF8563_ADDRESS, PCF8563_VL_SECONDS, RTCWireBus) >>
-          7);
+  return getBitInRegister(PCF8563_VL_SECONDS, 7);
 }
 
 /**************************************************************************/
@@ -1433,7 +1432,7 @@ void RTC_PCF8563::adjust(const DateTime &dt) {
   RTCWireBus->_I2C_WRITE(bin2bcd(dt.minute()));
   RTCWireBus->_I2C_WRITE(bin2bcd(dt.hour()));
   RTCWireBus->_I2C_WRITE(bin2bcd(dt.day()));
-  RTCWireBus->_I2C_WRITE(bin2bcd(0)); // skip weekdays
+  RTCWireBus->_I2C_WRITE(bin2bcd(dt.dayOfTheWeek()));
   RTCWireBus->_I2C_WRITE(bin2bcd(dt.month()));
   RTCWireBus->_I2C_WRITE(bin2bcd(dt.year() - 2000));
   RTCWireBus->endTransmission();
@@ -1456,7 +1455,7 @@ DateTime RTC_PCF8563::now() {
   uint8_t mm = bcd2bin(RTCWireBus->_I2C_READ() & 0x7F);
   uint8_t hh = bcd2bin(RTCWireBus->_I2C_READ() & 0x3F);
   uint8_t d = bcd2bin(RTCWireBus->_I2C_READ() & 0x3F);
-  RTCWireBus->_I2C_READ(); // skip 'weekdays'
+  RTCWireBus->_I2C_READ(); // skip 'weekdays', we can calculate it
   uint8_t m = bcd2bin(RTCWireBus->_I2C_READ() & 0x1F);
   uint16_t y = bcd2bin(RTCWireBus->_I2C_READ()) + 2000;
 
@@ -1469,12 +1468,7 @@ DateTime RTC_PCF8563::now() {
 */
 /**************************************************************************/
 void RTC_PCF8563::start(void) {
-  uint8_t ctlreg =
-      read_i2c_register(PCF8563_ADDRESS, PCF8563_CONTROL_1, RTCWireBus);
-  if (ctlreg & (1 << 5)) {
-    write_i2c_register(PCF8563_ADDRESS, PCF8563_CONTROL_1, ctlreg & ~(1 << 5),
-                       RTCWireBus);
-  }
+  setBitInRegister(PCF8563_CONTROL_1, 5, false);
 }
 
 /**************************************************************************/
@@ -1483,12 +1477,7 @@ void RTC_PCF8563::start(void) {
 */
 /**************************************************************************/
 void RTC_PCF8563::stop(void) {
-  uint8_t ctlreg =
-      read_i2c_register(PCF8563_ADDRESS, PCF8563_CONTROL_1, RTCWireBus);
-  if (!(ctlreg & (1 << 5))) {
-    write_i2c_register(PCF8523_ADDRESS, PCF8563_CONTROL_1, ctlreg | (1 << 5),
-                       RTCWireBus);
-  }
+  setBitInRegister(PCF8563_CONTROL_1, 5, true);
 }
 
 /**************************************************************************/
@@ -1498,9 +1487,55 @@ void RTC_PCF8563::stop(void) {
 */
 /**************************************************************************/
 uint8_t RTC_PCF8563::isrunning() {
-  uint8_t ctlreg =
-      read_i2c_register(PCF8563_ADDRESS, PCF8563_CONTROL_1, RTCWireBus);
-  return !((ctlreg >> 5) & 1);
+  return !getBitInRegister(PCF8563_CONTROL_1, 5);
+}
+
+/**************************************************************************/
+/*!
+    @brief Sets and enables an alarm. An alarm will fire at specified
+	       intervals according to mode.
+	@param dt Time and Date of an alarm
+	@param mode mode
+
+*/
+/**************************************************************************/
+void RTC_PCF8563::setAlarm(const DateTime &dt, PCF8563AlarmMode mode) {
+  RTCWireBus->beginTransmission(PCF8563_ADDRESS);
+  RTCWireBus->_I2C_WRITE(PCF8563_ALARM);
+  RTCWireBus->_I2C_WRITE(bin2bcd(dt.minute()));
+  RTCWireBus->_I2C_WRITE(mode != PCF8563_A_Minute ? bin2bcd(dt.hour())         : 0x80);
+  RTCWireBus->_I2C_WRITE(mode == PCF8563_A_Date   ? bin2bcd(dt.day())          : 0x80);
+  RTCWireBus->_I2C_WRITE(mode == PCF8563_A_Day    ? bin2bcd(dt.dayOfTheWeek()) : 0x80);
+  RTCWireBus->endTransmission();
+
+  setBitInRegister(PCF8563_CONTROL_2, 1, true);
+}
+
+/**************************************************************************/
+/*!
+    @brief Disable the alarm by setting AIE bit to 0 in register Control_2
+*/
+/**************************************************************************/
+void RTC_PCF8563::disableAlarm() {
+  setBitInRegister(PCF8563_CONTROL_2, 1, false);
+}
+
+/**************************************************************************/
+/*!
+    @brief Clear an active alarm.
+*/
+/**************************************************************************/
+void RTC_PCF8563::clearAlarm() {
+  setBitInRegister(PCF8563_CONTROL_2, 3, false);
+}
+
+/**************************************************************************/
+/*!
+  @brief Is an alarm active?
+*/
+/**************************************************************************/
+bool RTC_PCF8563::alarmFired() {
+  return getBitInRegister(PCF8563_CONTROL_2, 3);
 }
 
 /**************************************************************************/
@@ -1536,6 +1571,64 @@ void RTC_PCF8563::writeSqwPinMode(Pcf8563SqwPinMode mode) {
   RTCWireBus->_I2C_WRITE(mode);
   RTCWireBus->endTransmission();
 }
+
+/**************************************************************************/
+/*!
+    @returns bit's boolean value in a register.
+*/
+/**************************************************************************/
+bool RTC_PCF8563::getBitInRegister(uint8_t reg, uint8_t bit) {
+  uint8_t value =
+      read_i2c_register(PCF8563_ADDRESS, reg, RTCWireBus);
+  return (value >> bit) & 1;
+}
+
+/**************************************************************************/
+/*!
+    @brief Sets a bit to a desired value in a register.
+*/
+/**************************************************************************/
+void RTC_PCF8563::setBitInRegister(uint8_t reg, uint8_t bit, bool value) {
+  uint8_t registerValue =
+      read_i2c_register(PCF8563_ADDRESS, reg, RTCWireBus);
+  bool currentValueOfBit = (registerValue >> bit) & 1;
+
+  if (value != currentValueOfBit) {
+    if (value) {
+      registerValue |= (1 << bit);
+    }
+    else {
+      registerValue &= ~(1 << bit);
+    }
+
+    registerValue = sanitizeRegisterValueForWriting(reg, registerValue);
+
+    write_i2c_register(PCF8563_ADDRESS, reg, registerValue, RTCWireBus);
+  }
+}
+
+/**************************************************************************/
+/*!
+    @brief Certain bits in control registers need to always be written with
+           value 0 but may be read with any value. Therefore it is necessary
+           to set them to 0.
+    @param value the value to sanitize
+	@return sanitized value
+*/
+/**************************************************************************/
+uint8_t RTC_PCF8563::sanitizeRegisterValueForWriting(uint8_t reg, uint8_t registerValue) {
+  switch (reg) {
+    case PCF8563_CONTROL_1:
+      return registerValue & 0xA8;
+
+    case PCF8563_CONTROL_2:
+      return registerValue & 0x1F;
+
+    default:
+      return registerValue;
+  }
+}
+
 // END RTC_PCF8563 implementation
 
 /**************************************************************************/

@@ -42,6 +42,7 @@ class TimeSpan;
 #define PCF8563_CONTROL_1 0x00     ///< Control and status register 1
 #define PCF8563_CONTROL_2 0x01     ///< Control and status register 2
 #define PCF8563_VL_SECONDS 0x02    ///< register address for VL_SECONDS
+#define PCF8563_ALARM 0x09         ///< address of first alarm register
 #define PCF8563_CLKOUT_MASK 0x83   ///< bitmask for SqwPinMode on CLKOUT pin
 
 #define DS1307_ADDRESS 0x68 ///< I2C address for DS1307
@@ -430,6 +431,14 @@ enum Pcf8563SqwPinMode {
   PCF8563_SquareWave32kHz = 0x80 /**< 32kHz square wave */
 };
 
+/** PCF8563 Alarm modes */
+enum PCF8563AlarmMode {
+  PCF8563_A_Minute,    /**< Alarm every hour at specified minute. */
+  PCF8563_A_Hour,      /**< Alarm every day at specified hour and minute.  */
+  PCF8563_A_Date,      /**< Alarm every month at specified day of month, hour and minute. */
+  PCF8563_A_Day        /**< Alarm every week at specified day of week, hour and minute. */
+};
+
 /**************************************************************************/
 /*!
     @brief  RTC based on the PCF8563 chip connected via I2C and the Wire library
@@ -445,11 +454,20 @@ public:
   void start(void);
   void stop(void);
   uint8_t isrunning();
+  void setAlarm(const DateTime &dt, PCF8563AlarmMode alarm_mode);
+  void disableAlarm();
+  void clearAlarm();
+  bool alarmFired();
   Pcf8563SqwPinMode readSqwPinMode();
   void writeSqwPinMode(Pcf8563SqwPinMode mode);
 
 protected:
   TwoWire *RTCWireBus; ///< I2C bus connected to the RTC
+
+private:
+  bool getBitInRegister(uint8_t reg, uint8_t bit);
+  void setBitInRegister(uint8_t reg, uint8_t bit, bool value);
+  uint8_t sanitizeRegisterValueForWriting(uint8_t reg, uint8_t value);
 };
 
 /**************************************************************************/
